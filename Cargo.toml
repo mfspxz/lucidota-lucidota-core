@@ -1,0 +1,26 @@
+[package]
+name = "lucidota-core"
+version = "0.1.0"
+edition = "2021"
+description = "LUCIDOTA CORE — deterministic exocortex kernel: persistent correction memory, claim-evidence gate, worker receipt discipline, daemon fleet pattern. No LLM in the core; judgment stays human."
+license = "MIT"
+
+[lib]
+name = "lucidota_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lucid"
+path = "src/bin/lucid.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+organelle-host = { path = "../organelles/crates/organelle-host" }
+organelle-manifest = { path = "../organelles/crates/organelle-manifest" }
+
+[dev-dependencies]
+tempfile = "3"
