@@ -1,7 +1,7 @@
 # AUDIT-APPLICATION — lucidota-core
 
 **Slice:** brutal-audit rollout 3/8. **Date:** 2026-10-10. **Repo:** ~/workspace/lucidota-core.
-**Audited at:** `c0e49ea`. **This pass:** TBD (filled after commit).
+**Audited at:** `c0e49ea`. **This pass:** `78ad3ff`.
 
 ## What this is
 
