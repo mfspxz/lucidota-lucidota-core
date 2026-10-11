@@ -169,6 +169,10 @@ impl CorrectionStore {
 
 #[cfg(test)]
 mod tests {
+    // PROPERTY TESTS (R-7) — chain invariants: seeded records verify,
+    // tampered links fail verification, appends preserve the chain.
+    // Expectations here may never be rewritten to match a behavior change
+    // without adversarial sign-off.
     use super::*;
     use chrono::TimeZone;
 

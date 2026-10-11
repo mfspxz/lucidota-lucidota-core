@@ -50,6 +50,9 @@ pub fn lint_text(text: &str) -> Vec<LintHit> {
 
 #[cfg(test)]
 mod tests {
+    // CHANGE-DETECTION TESTS (R-7) — assert the current banned-phrase list
+    // and matching semantics (case-insensitive substring per line). If the
+    // list changes, these change with it; that is their job.
     use super::*;
 
     #[test]

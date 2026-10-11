@@ -66,6 +66,13 @@ pub struct GateVerdict {
 }
 
 /// Run the gate. Deterministic: same claim, same verdict, every time.
+///
+/// HONEST BOUNDS (R-2): the gate enforces claim STRUCTURE, not truth. It
+/// trusts the `verified` flag the CALLER set on each EvidenceRef — a caller
+/// that marks garbage `verified` gets `Proven`. Contradictions beat support
+/// and empty evidence is flagged as claim-laundering, but "verified" here
+/// means "someone asserted verification", not "this gate verified it". Do
+/// not cite a `Proven` verdict as independent verification.
 pub fn evaluate(claim: &Claim) -> GateVerdict {
     let mut notes = Vec::new();
     if claim.evidence.iter().any(|e| e.contradicts) {
@@ -87,6 +94,10 @@ pub fn evaluate(claim: &Claim) -> GateVerdict {
 
 #[cfg(test)]
 mod tests {
+    // PROPERTY TESTS (R-7) — gate-behavior invariants: no-evidence is
+    // Unknown, contradiction beats support, verified-only-if-flagged.
+    // Expectations here may never be rewritten to match a behavior change
+    // without adversarial sign-off.
     use super::*;
 
     #[test]

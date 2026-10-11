@@ -11,6 +11,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// What the auditor receives: the claim of completion plus the evidence.
+///
+/// HONESTLY-UNSIGNED (R-8): this handoff is evidence-attached, not signed.
+/// Its verification power is "the worker attached something the auditor can
+/// check", not provenance. A handoff from a compromised worker is
+/// indistinguishable from an honest one — the audit step is the control,
+/// not this struct.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditHandoff {
     pub worker_id: String,
