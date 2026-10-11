@@ -1,3 +1,5 @@
+[Active R&D Lab] — no CI runs on record; active development, expect rough edges.
+
 # LUCIDOTA CORE
 
 Deterministic exocortex kernel. Rust. No LLM in the core — judgment stays human.
