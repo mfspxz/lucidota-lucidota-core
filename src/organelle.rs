@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::correction::CorrectionStore;
-use crate::fleet::{DaemonState, Heartbeat, Role, Supervisor};
+use crate::fleet::{DaemonState, Heartbeat, Readiness, Role, Supervisor};
 use crate::gate::{Claim, EvidenceRef};
 use crate::{gate, lint, receipt};
 
@@ -55,6 +55,18 @@ fn parse_role(s: &str) -> Result<Role, OrganelleError> {
         "worker" => Ok(Role::Worker),
         "auditor" => Ok(Role::Auditor),
         _ => Err(OrganelleError::failed(format!("unknown role {s:?}"))),
+    }
+}
+
+fn parse_readiness(s: &str) -> Result<Readiness, OrganelleError> {
+    match s {
+        // Conservative default: a bare heartbeat proves liveness, never readiness.
+        "connected" | "" => Ok(Readiness::Connected),
+        "ready" => Ok(Readiness::Ready),
+        "executing" => Ok(Readiness::Executing),
+        "stalled" => Ok(Readiness::Stalled),
+        "recovering" => Ok(Readiness::Recovering),
+        _ => Err(OrganelleError::failed(format!("unknown readiness {s:?}"))),
     }
 }
 
@@ -138,7 +150,7 @@ fn manifest() -> OrganelleManifest {
         contract("receipt_handoff", "attempt ready_for_audit handoff; refuses without evidence",
             obj_schema(serde_json::json!({"receipt": {"type": "object"}}), &["receipt"])),
         contract_gated("fleet_heartbeat", "record a daemon heartbeat",
-            obj_schema(serde_json::json!({"daemon_id": {"type": "string"}, "role": {"type": "string", "enum": ["foreman", "worker", "auditor"]}, "state": {"type": "string", "enum": ["starting", "running", "idle", "stalled", "stopped"]}, "seq": {"type": "integer"}}), &["daemon_id", "role", "state", "seq"]),
+            obj_schema(serde_json::json!({"daemon_id": {"type": "string"}, "role": {"type": "string", "enum": ["foreman", "worker", "auditor"]}, "state": {"type": "string", "enum": ["starting", "running", "idle", "stalled", "stopped"]}, "readiness": {"type": "string", "enum": ["connected", "ready", "executing", "stalled", "recovering"]}, "seq": {"type": "integer"}}), &["daemon_id", "role", "state", "seq"]),
             MutationClass::Write, "ld.fleet.write"),
         contract_gated("fleet_tick", "tick the supervisor; returns stale daemon ids",
             obj_schema(serde_json::json!({"now_ms": {"type": "integer"}}), &[]),
@@ -254,7 +266,8 @@ impl Organelle for LucidotaCore {
             }
             "fleet_heartbeat" => {
                 let hb = Heartbeat::now(&str_in(&input, "daemon_id")?, parse_role(input.get("role").and_then(|x| x.as_str()).unwrap_or(""))?, parse_state(input.get("state").and_then(|x| x.as_str()).unwrap_or(""))?,
-                    input.get("seq").and_then(|x| x.as_u64()).unwrap_or(0));
+                    input.get("seq").and_then(|x| x.as_u64()).unwrap_or(0))
+                    .with_readiness(parse_readiness(input.get("readiness").and_then(|x| x.as_str()).unwrap_or("connected"))?);
                 let mut s = self.supervisor.lock().map_err(|_| OrganelleError::failed("supervisor lock poisoned"))?;
                 s.heartbeat(hb).map_err(OrganelleError::failed)?;
                 Ok(serde_json::json!({"recorded": true}))
@@ -317,33 +330,37 @@ mod tests {
 
         // gate: no evidence -> Unknown + laundering suspect (pure, real code)
         let g = host.call(&ctx, "ld", "gate", serde_json::json!({"text": "it works", "evidence": []})).expect("gate");
-        assert_eq!(g["verdict"], "unknown");
-        assert_eq!(g["claim_laundering_suspect"], true);
+        assert_eq!(g.output["verdict"], "unknown");
+        assert_eq!(g.output["claim_laundering_suspect"], true);
 
         // gate: verified evidence -> Proven
         let g2 = host.call(&ctx, "ld", "gate", serde_json::json!({
             "text": "it works", "evidence": [{"pointer": "test-1", "verified": true}]}))
             .expect("gate proven");
-        assert_eq!(g2["verdict"], "proven");
+        assert_eq!(g2.output["verdict"], "proven");
 
         // lint: banned phrase detected (pure, real code)
         let l = host.call(&ctx, "ld", "lint", serde_json::json!({"text": "it seems to work"})).expect("lint");
-        assert!(l.as_array().unwrap().len() > 0);
+        assert!(l.output.as_array().unwrap().len() > 0);
 
         // receipt discipline: handoff without evidence is REFUSED (real code)
         let r = host.call(&ctx, "ld", "receipt_new", serde_json::json!({"worker_id": "w1", "task": "t1"})).expect("receipt_new");
-        let h = host.call(&ctx, "ld", "receipt_handoff", serde_json::json!({"receipt": r})).expect("handoff");
-        assert_eq!(h["handed_off"], false);
+        let h = host.call(&ctx, "ld", "receipt_handoff", serde_json::json!({"receipt": r.output.clone()})).expect("handoff");
+        assert_eq!(h.output["handed_off"], false);
         // with evidence -> handed off
-        let r2 = host.call(&ctx, "ld", "receipt_attach", serde_json::json!({"receipt": r, "evidence": "proof.txt"})).expect("attach");
-        let h2 = host.call(&ctx, "ld", "receipt_handoff", serde_json::json!({"receipt": r2})).expect("handoff2");
-        assert_eq!(h2["handed_off"], true);
+        let r2 = host.call(&ctx, "ld", "receipt_attach", serde_json::json!({"receipt": r.output, "evidence": "proof.txt"})).expect("attach");
+        let h2 = host.call(&ctx, "ld", "receipt_handoff", serde_json::json!({"receipt": r2.output})).expect("handoff2");
+        assert_eq!(h2.output["handed_off"], true);
 
         // fleet: heartbeat -> claim roundtrip (real supervisor)
-        host.call(&ctx, "ld", "fleet_heartbeat", serde_json::json!({"daemon_id": "d1", "role": "worker", "state": "running", "seq": 1})).expect("hb");
+        // Ready (not merely Connected): under WIRE-3 semantics a bare heartbeat
+        // proves liveness only and is never admitted to claim work, so the
+        // roundtrip must report readiness explicitly. Omitting "readiness"
+        // still defaults to Connected and claim stays denied.
+        host.call(&ctx, "ld", "fleet_heartbeat", serde_json::json!({"daemon_id": "d1", "role": "worker", "state": "running", "readiness": "ready", "seq": 1})).expect("hb");
         host.call(&ctx, "ld", "fleet_enqueue", serde_json::json!({"id": "job1", "payload": "do thing"})).expect("enq");
         let c = host.call(&ctx, "ld", "fleet_claim", serde_json::json!({"daemon_id": "d1"})).expect("claim");
-        assert_eq!(c["claimed"]["id"], "job1");
+        assert_eq!(c.output["claimed"]["id"], "job1");
 
         // correction store against a temp path (real chain: seed -> add -> find)
         let dir = tempfile::tempdir().unwrap();
@@ -351,7 +368,7 @@ mod tests {
         let ps = p.to_str().unwrap();
         host.call(&ctx, "ld", "correct_add", serde_json::json!({"path": ps, "rule": "test rule", "category": "discipline", "source": "wave-4a"})).expect("add");
         let f = host.call(&ctx, "ld", "correct_find", serde_json::json!({"path": ps, "query": "test rule"})).expect("find");
-        assert_eq!(f.as_array().unwrap().len(), 1);
+        assert_eq!(f.output.as_array().unwrap().len(), 1);
 
         let n = host.verify_chain().expect("receipt chain must verify");
         assert!(n >= 10, "expected >=10 receipts, got {n}");
